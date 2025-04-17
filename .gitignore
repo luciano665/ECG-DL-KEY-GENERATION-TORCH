@@ -1,0 +1,9 @@
+*.csv
+.env
+*.png
+*.json
+*.txt
+*.xml
+*.pkl
+# ignore the torch-use data folder
+segmented_ecg_data_torch_use/
