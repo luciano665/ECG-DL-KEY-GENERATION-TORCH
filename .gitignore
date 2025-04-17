@@ -5,5 +5,10 @@
 *.txt
 *.xml
 *.pkl
+
+# JetBrains IDE
+*.iml
+.idea/
+
 # ignore the torch-use data folder
 segmented_ecg_data_torch_use/
