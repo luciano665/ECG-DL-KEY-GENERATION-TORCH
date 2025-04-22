@@ -178,7 +178,7 @@ class BioKeyTransformer(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # x: (batch, seq_len, 1) -> permute for Conv1D: (bacth, 1, seq_len)
+        # x: (batch, seq_len, 1) -> permute for Conv1D: (batch, 1, seq_len)
         x = x.permute(0, 2, 1)
         # Convolutional feature extraction
         x = self.conv(x)        # -> (batch, 256, seq_len)
@@ -193,7 +193,200 @@ class BioKeyTransformer(nn.Module):
         # Map the key bits and apply sigmoid
         return  self.sigmoid(self.key_proj(x))
 
+# -----------------------------------------------------------------------------
+# 3. Training System: KeyGenerationSystem
+#    - Integrates data loading, model instantiation, training loop
+#    - Implements early stopping based on validation loss
+#    - Provides key generation (inference) method
+# -----------------------------------------------------------------------------
+class KeyGenerationSystem:
+    """
+    Orchestrates data loading, model training, and key generation
+    """
+    def __init__(self, data_dir, key_path, device=None):
+        # Init data loader
+        self.loader = ECGKeyLoader(data_dir, key_path)
+        # Determine compute device
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        # Instantiate model with correct key lenght
+        key_bits = self.loader.persons[0]['key'].shape[0]
+        self.model = BioKeyTransformer(key_bits=key_bits).to(self.device)
 
+    def train(self, epochs=100, batch_size=32, lr=1e-4, patience=10):
+        """
+        Train the model with:
+            - Adam Optimizer
+            - Binary cross-entropy loss
+            - Early stopping after 'patience' epochs without val_loss improvment
+        Returns training history dict
+        """
+
+        # Get splits
+        X_train, X_val, y_train, y_val = self.loader.get_train_data()
+        # Wrap in TensorDatasets
+        train_ds = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train))
+        val_ds = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val))
+        # Dataloaders for batch iteration
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+
+        # Optimizer and loss
+        opt = torch.optim.Adam(self.model.parameters(), lr=lr)
+        crit = nn.BCELoss()
+
+        best_loss = float('inf')
+        epochs_no_improve = 0
+        best_state = None
+        history = {'train_loss': [], 'val_loss': []}
+
+        for ep in range(1, epochs+1):
+            # Training phase
+            self.model.train()
+            train_loss = 0.0
+            for xb, yb in train_loader:
+                xb, yb = xb.to(self.device), yb.to(self.device)
+                opt.zero_grad()
+                predictions = self.model(xb)
+                loss = crit(predictions, yb)
+                loss.backward()
+                opt.step()
+                train_loss += loss.item() * xb.size(0)
+            train_loss /= len(train_loader.dataset)
+
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for xb, yb in val_loader:
+                    xb, yb = xb.to(self.device), yb.to(self.device)
+                    val_loss += crit(self.model(xb), yb).item() * xb.size(0)
+            val_loss /= len(val_loader.dataset)
+
+            # Record history
+            history['train_loss'].append(train_loss)
+            history['val_loss'].append(val_loss)
+            print(f"Epoch {ep}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
+
+            # Early stopping logic
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_state = self.model.state_dict()
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"Stopping early at epoch {ep}")
+                    break
+        # Restore best model weights
+        if best_state is not None:
+            self.model.load_state_dict(best_state)
+        return history
+
+    def generate_key(self, ecg_segments, threshold=0.5):
+        """
+        Inference: aggregate predictions over multiple segments to
+        produce final binary key via thresholding
+        """
+        if ecg_segments is None or len(ecg_segments) == 0:
+            raise  ValueError("No ECG segments provided")
+        # Convert list/array to tensor
+        arr = np.array(ecg_segments, dtype=np.float32)
+        if arr.ndim == 2:
+            arr = np.expand_dims(arr, -1)
+        tensor = torch.from_numpy(arr).to(self.device)
+
+        # Model forward pass
+        self.model.eval()
+        with torch.no_grad():
+            probs = self.model(tensor).cpu().numpy()
+        # Average probabilities across segments
+        avg = probs.mean(axis=0)
+        # Threshold operation for to get binary key
+        return  (avg > threshold).astype(np.int32)
+
+
+# -----------------------------------------------------------------------------
+# 4. Main Execution: script entrypoint
+#    - Configurable data paths
+#    - Error handling and reporting
+#    - Computes intra- and inter-person Hamming distances
+#    - Saves raw distance data for subsequent analysis
+# -----------------------------------------------------------------------------
+if __name__ == "__main__":
+    DATA_DIR = "/Users/lucianomaldonado/ECG-PV-GENERATION-GROUND-KEY/segmented_ecg_data"
+    KEY_FILE = "/Users/lucianomaldonado/ECG-PV-GENERATION-GROUND-KEY/Ground Keys/secrets_random_keys.json"
+
+    try:
+        print("Initializing system...")
+        kgs = KeyGenerationSystem(DATA_DIR, KEY_FILE)
+
+        print("\nStarting training...")
+        kgs.train(epochs=100)
+
+        # ---------------------------------------------------------------------
+        # Testing and evaluation: compute Hamming distances
+        # ---------------------------------------------------------------------
+        print("\nTesting key generation for all persons:")
+        aggregated_keys = {}
+        all_intra = []
+
+        for person in kgs.loader.persons:
+            segs = person['segments']
+            agg  = kgs.generate_key(segs)
+            gt   = person['key'].astype(np.int32)
+            acc  = np.mean(agg == gt)
+            print(f"\nPerson {person['id']}: Aggregated Key Accuracy: {acc:.2%}")
+            aggregated_keys[person['id']] = agg
+
+            # Compute intra-person Hamming distances
+            preds = (kgs.model(torch.from_numpy(segs).float().to(kgs.device).unsqueeze(-1))
+                     .cpu().numpy() > 0.5).astype(int)
+            dists = []
+            for i in range(len(preds)):
+                for j in range(i+1, len(preds)):
+                    dists.append(np.sum(preds[i] != preds[j]))
+            if dists:
+                m, s = np.mean(dists), np.std(dists)
+                print(f"  Intra-person avg Hamming distance: {m:.2f} ± {s:.2f} bits")
+                all_intra += dists
+            else:
+                print("  Not enough segments to compute intra-person HD.")
+
+        # Overall intra-person statistics
+        if all_intra:
+            print(f"\nOverall Intra-person HD: mean={np.mean(all_intra):.2f}, std={np.std(all_intra):.2f}")
+        else:
+            print("\nNo intra-person HD data.")
+
+        # ---------------------------------------------------------------------
+        # Inter-person Hamming distances
+        # ---------------------------------------------------------------------
+        print("\nInter-person Hamming distances:")
+        ids = sorted(aggregated_keys)
+        inter = []
+        for i in range(len(ids)):
+            for j in range(i+1, len(ids)):
+                d = int(np.sum(aggregated_keys[ids[i]] != aggregated_keys[ids[j]]))
+                inter.append(d)
+                print(f"  {ids[i]} vs {ids[j]}: {d} bits")
+        if inter:
+            print(f"\nOverall Inter-person HD: mean={np.mean(inter):.2f}, std={np.std(inter):.2f}")
+        else:
+            print("\nNo inter-person HD data.")
+
+        # Save raw distance arrays for plotting or further analysis
+        with open("all_intra_distances.pkl", "wb") as f:
+            pickle.dump(all_intra, f)
+        with open("person_inter_dists.pkl", "wb") as f:
+            pickle.dump(inter, f)
+
+    except Exception as e:
+        print(f"\nError: {e}")
+        print("Checklist:")
+        print("1. Person_XX/rec_2_filtered/*.csv present")
+        print("2. Each CSV: 170 values, no header")
+        print("3. JSON keys match Person_XX IDs")
+        print("4. ≥10 segments total")
 
 
 
