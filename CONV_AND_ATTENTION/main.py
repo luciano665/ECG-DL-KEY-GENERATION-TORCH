@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 
 import torch
 import torch.nn as nn
+from torch.fx.experimental.unification.unification_tools import first
 from torch.utils.data import DataLoader, TensorDataset
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -144,6 +145,54 @@ class ECGKeyLoader:
 
         # Stratified split to maintain class distribution (by person)
         return train_test_split(X, y, test_size=test_size, stratify=ids)
+
+
+# -----------------------------------------------------------------------------
+# 2. Model Definition: BioKeyTransformer
+#    - 1D CNN encoder to extract features from ECG
+#    - Multi-head self-attention to learn temporal dependencies
+#    - LayerNorm + residual for stability
+#    - Global average pooling → binary key projection
+# -----------------------------------------------------------------------------
+class BioKeyTransformer(nn.Module):
+    """
+    Hybrid CNN-Transformer for ECG-based binary key generation
+    Input: (batch, seq_len, 1)
+    Output: (batch, key_bits) with values 0/1
+    """
+    def __init__(self, key_bits=256):
+        super().__init__()
+        # Convolutional stack: progressively increase channel depth
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=64, kernel_size=15, padding=7), nn.ReLU(),
+            nn.Conv1d(64, 128, 10, padding=5), nn.ReLU(),
+            nn.Conv1d(128, 256, 5, padding=2), nn.ReLU()
+        )
+        # Self-Attention: embed_dim=256, num_heads=8
+        self.attn = nn.MultiheadAttention(embed_dim=256, num_heads=8, batch_first=True)
+        # Post-attention normalization + residual
+        self.norm = nn.LayerNorm(256)
+        # Linear layer to map pooled features to key bits
+        self.key_proj = nn.Linear(256, key_bits)
+        # Sigmoid to obtain probabilities for each bit
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # x: (batch, seq_len, 1) -> permute for Conv1D: (bacth, 1, seq_len)
+        x = x.permute(0, 2, 1)
+        # Convolutional feature extraction
+        x = self.conv(x)        # -> (batch, 256, seq_len)
+        # Back to (batch, seq_len, 256) for attention
+        x = x.permute(0, 2, 1)
+        # Self-attention (query=key=value)
+        attn_out, _ = self.attn(x, x, x)
+        # Normalization layer , Add & norm (residual connection)
+        x = self.norm(x + attn_out)
+        # Global average pooling along time dimension
+        x = x.mean(dim=1)
+        # Map the key bits and apply sigmoid
+        return  self.sigmoid(self.key_proj(x))
+
 
 
 
