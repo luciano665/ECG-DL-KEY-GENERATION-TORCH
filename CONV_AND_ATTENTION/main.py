@@ -6,8 +6,34 @@ from sklearn.model_selection import train_test_split
 
 import torch
 import torch.nn as nn
-from torch.fx.experimental.unification.unification_tools import first
 from torch.utils.data import DataLoader, TensorDataset
+import wandb
+import os
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0. Initialize wandb client
+#   - A training monitoring tool, visualization of loss
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Get wandb API_key
+# Login into wandb library
+wandb.login(relogin=True)
+
+# Init wandDB to record results
+wandb.init(
+    entity = "lumr0067-west-virginia-university",
+
+    project = "ecg-key_generation",
+
+    config = {
+        "epochs": 100,
+        "batch_size": 32,
+        "learning_rate": 1e-4,
+        "patience": 10
+    }
+)
+config = wandb.config # access config values throughout
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Data Loader: ECGKeyLoader
@@ -211,6 +237,7 @@ class KeyGenerationSystem:
         # Instantiate model with correct key lenght
         key_bits = self.loader.persons[0]['key'].shape[0]
         self.model = BioKeyTransformer(key_bits=key_bits).to(self.device)
+        wandb.watch(self.model, log='all', log_freq=50)  # Monitor model logs
 
     def train(self, epochs=100, batch_size=32, lr=1e-4, patience=10):
         """
@@ -230,13 +257,16 @@ class KeyGenerationSystem:
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-        # Optimizer and loss
-        opt = torch.optim.Adam(self.model.parameters(), lr=lr)
-        crit = nn.BCELoss()
 
+        # Optimizer and loss
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        criterion = nn.BCELoss()
+
+        # Initialize best_state to current weights
+        best_state = self.model.state_dict()
         best_loss = float('inf')
         epochs_no_improve = 0
-        best_state = None
+        #best_state = None
         history = {'train_loss': [], 'val_loss': []}
 
         for ep in range(1, epochs+1):
@@ -245,11 +275,11 @@ class KeyGenerationSystem:
             train_loss = 0.0
             for xb, yb in train_loader:
                 xb, yb = xb.to(self.device), yb.to(self.device)
-                opt.zero_grad()
+                optimizer.zero_grad()
                 predictions = self.model(xb)
-                loss = crit(predictions, yb)
+                loss = criterion(predictions, yb)
                 loss.backward()
-                opt.step()
+                optimizer.step()
                 train_loss += loss.item() * xb.size(0)
             train_loss /= len(train_loader.dataset)
 
@@ -259,8 +289,15 @@ class KeyGenerationSystem:
             with torch.no_grad():
                 for xb, yb in val_loader:
                     xb, yb = xb.to(self.device), yb.to(self.device)
-                    val_loss += crit(self.model(xb), yb).item() * xb.size(0)
+                    val_loss += criterion(self.model(xb), yb).item() * xb.size(0)
             val_loss /= len(val_loader.dataset)
+
+            # Log metrics to Wandb
+            wandb.log({
+                'epoch': ep,
+                'train_loss': train_loss,
+                'val_loss': val_loss
+            })
 
             # Record history
             history['train_loss'].append(train_loss)
@@ -278,8 +315,7 @@ class KeyGenerationSystem:
                     print(f"Stopping early at epoch {ep}")
                     break
         # Restore best model weights
-        if best_state is not None:
-            self.model.load_state_dict(best_state)
+        self.model.load_state_dict(best_state)
         return history
 
     def generate_key(self, ecg_segments, threshold=0.5):
@@ -313,8 +349,8 @@ class KeyGenerationSystem:
 #    - Saves raw distance data for subsequent analysis
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    DATA_DIR = "/Users/lucianomaldonado/ECG-PV-GENERATION-GROUND-KEY/segmented_ecg_data"
-    KEY_FILE = "/Users/lucianomaldonado/ECG-PV-GENERATION-GROUND-KEY/Ground Keys/secrets_random_keys.json"
+    DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
+    KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
 
     try:
         print("Initializing system...")
