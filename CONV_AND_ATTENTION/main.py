@@ -225,7 +225,6 @@ class BioKeyTransformer(nn.Module):
 #    - Implements early stopping based on validation loss
 #    - Provides key generation (inference) method
 # -----------------------------------------------------------------------------
-# CONTINUE HERE
 class KeyGenerationSystem:
     """
     Orchestrates data loading, model training, and key generation
