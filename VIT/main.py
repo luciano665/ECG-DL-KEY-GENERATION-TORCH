@@ -235,6 +235,17 @@ class TransformerKeyGenerator(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x): # x shape: (batch, seq_len, channels)
+        # Patch + Projection
+        x = self.patch_embed(x)
+        # Add positional info
+        x = x + self.pos_embed
+        # Transformer stack
+        for block in self.transformer_blocks:
+            x = block(x) # -> to each block
+        x = x.permute(0, 2, 1) # -> (batch, embed_dim, num_patches) for pooling
+        x = self.gap(x).squezee(-1) # -> (batch, embed_dim)
+        x = self.key_proj(x) # (batch, key_bits)
+        return self.sigmoid(x)
 
 
 
