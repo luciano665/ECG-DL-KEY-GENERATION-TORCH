@@ -181,4 +181,61 @@ class TransformerBlock(nn.Module):
         # Residual + layer-norm
         return self.norm2(out1 + ffn)
 
+class PatchEmbedding(nn.Module):
+    def __init__(self, patch_size, embed_dim):
+        super().__init__()
+        # Length of each patch
+        self.patch_size = patch_size
+        # 1D conv to project patched to embedding dim
+        self.proj = nn.Conv1d(in_channels=1,
+                              out_channels=embed_dim,
+                              kernel_size=patch_size,
+                              stride=patch_size,
+                              padding=0)
+
+    def forward(self, x): # x shape: (batch, seq_len, channels)
+        # Check if missing channel dim
+        if x.ndim == 2:
+            x = x.unsqueeze(-1) # add channel=1
+        x = x.permute(0, 2, 1) # -> (batch, channels, seq_len) for CONV
+        x = self.proj(x) # -> (batch, embed_dim, num_patches)
+        x = x.permute(0, 2, 1) # -> (batch, num_patches, embed_dim)
+        return x
+
+class TransformerKeyGenerator(nn.Module):
+    # Constructor
+    def __init__(self, seq_len=170, patch_size=10, embed_dim=64,
+                 num_heads=4, mlp_dim=128, num_transformer_blocks=4,
+                 key_bits=256, dropout_rate=0.1):
+        super().__init__()
+        # Input seq_len
+        self.seq_len = seq_len
+        # Patch len
+        self.patch_size = patch_size
+        # Embedding dim
+        self.embed_dim = embed_dim
+        # Num of patches
+        self.num_patches = seq_len // patch_size
+        # Length of output key
+        self.key_bits = key_bits
+
+        self.patch_embed = PatchEmbedding(patch_size, embed_dim)
+        # Positional embeddings parameter
+        self.pos_embed = nn.Parameter(torch.randn(1, self.num_patches, embed_dim) * 0.02)
+        # Stack of transformer encoder blocks
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(embed_dim, num_heads, mlp_dim, dropout_rate)
+            for _ in range(num_transformer_blocks)
+        ])
+        # Global ave pooling
+        self.gap = nn.AdaptiveAvgPool1d(1)
+        # Final Projection
+        self.key_proj = nn.Linear(embed_dim, key_bits)
+        # Sigmoid for binary output (thresholding)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x): # x shape: (batch, seq_len, channels)
+
+
+
 
