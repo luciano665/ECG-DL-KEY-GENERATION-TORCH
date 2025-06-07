@@ -247,6 +247,17 @@ class TransformerKeyGenerator(nn.Module):
         x = self.key_proj(x) # (batch, key_bits)
         return self.sigmoid(x)
 
+# =====================================================================
+# 3. Training and Key Generation System (mirrors TF logic) with WandB
+# =====================================================================
+class KeyGenerationSystem:
+    def __init__(self, data_dir, key_path, device=None):
+        # Init data loader
+        self.loader = ECGKeyLoader(data_dir, key_path)
+        # Determine compute device
+        self.device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+        # Placeholder for model
+        self.model = None
 
 
 
