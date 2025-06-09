@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from scipy.linalg import circulant
 from torch import dtype
+from torch.cuda import device
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import wandb
@@ -63,8 +64,8 @@ class ECGKeyLoader:
         valid_ids = set(self.key_map.keys())
 
         # loop through entries
-        for dir_name in sorted(os.listdir(self.data_dir))
-            if not dir_name.startswith("Person_") # skip invalid directories
+        for dir_name in sorted(os.listdir(self.data_dir)):
+            if not dir_name.startswith("Person_"): # skip invalid directories
                 continue
             try:
                 # Extract ID and handle extra 0's
@@ -371,6 +372,89 @@ class KeyGenerationSystem:
         avg = probs.mean(axis=0) # average probabilities across segments
         # Threshold for final binary output
         return (avg > threshold).astype(np.int32)
+
+# =====================================================================
+# 4. Main Execution with Error Handling (mirrors TF script)
+# =====================================================================
+if __name__ == '__main__':
+    DATA_DIR = ""
+    KEY_FILE = ""
+
+    try:
+        print("Initializing system....")
+        kgs = KeyGenerationSystem(DATA_DIR, KEY_FILE)
+
+        print("\nStarting training....")
+        kgs.train(epochs=config.epochs) # train model using WandB hyperparameters
+
+        # Dummy forward to build model
+        _ = kgs.model(torch.zeros((1, config.seq_len, 1), device=kgs.device))
+
+        # ----------------------------
+        # Test key generation for all persons
+        # ----------------------------
+        print("\nTesting key generation for all persons:")
+        aggregated_keys = {} # store aggregated keys
+        all_intra = [] # intra-person distances H
+
+        for person in kgs.loader.persons:
+            segments = person['segments']
+            if segments.ndim == 2:
+                segments = segments.reshape(segments.shape[0], segments.shape[1], 1)
+
+            agg_key = kgs.generate_key(segments)
+            ground_keys = person['key'].astype(np.int32)
+            acc = np.mean(agg_key == ground_keys) # accuracy
+            print(f"\nPerson {person['id']}: Aggregated Key Accuracy: {acc:.2%}")
+            aggregated_keys[person['id']] == agg_key
+
+            # compute intra-person Hamming distances
+            with torch.no_grad():
+                preds = (kgs.model(torch.from_numpy(segments).to(kgs.device)).cpu().numpy() > 0.5).astype(int)
+            dists = []
+            for i in range(len(preds)):
+                for j in range(i + 1, len(preds)):
+                    dists.append(np.sum(preds[i] != preds[j]))
+            if dists:
+                m, s = np.mean(dists), np.std(dists)
+                print(f"  Intra-person avg Hamming distance: {m:.2f} ± {s:.2f} bits")
+                all_intra += dists
+            else:
+                print("  Not enough segments to compute intra-person HD.")
+
+        if all_intra:
+            print(f"\nOverall Intra-person HD: mean={np.mean(all_intra):.2f}, std={np.std(all_intra):.2f}")
+        else:
+            print("\nNo intra-person HD data.")
+
+        # Inter-person Hamming distances
+        print("\nInter-person Hamming distances:")
+        ids = sorted(aggregated_keys)
+        inter = []
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                d = int(np.sum(aggregated_keys[ids[i]] != aggregated_keys[ids[j]]))
+                inter.append(d)
+                print(f"  {ids[i]} vs {ids[j]}: {d} bits")
+        if inter:
+            print(f"\nOverall Inter-person HD: mean={np.mean(inter):.2f}, std={np.std(inter):.2f}")
+        else:
+            print("\nNo inter-person HD data.")
+
+        # save raw distance arrays
+        with open("all_intra_distances.pkl", "wb") as f:
+            pickle.dump(all_intra, f)
+        with open("person_inter_dists.pkl", "wb") as f:
+            pickle.dump(inter, f)
+
+    except Exception as e:
+        print(f"\nError: {e}")
+        print("Verification Checklist:")
+        print("1. Directory structure: Person_XX/rec_N_filtered/*.csv")
+        print("2. CSV files contain exactly 170 values, no headers")
+        print("3. JSON keys match Person_XX numbering (1-89)")
+        print("4. Minimum 10 segments across all persons")
+        print("Something went wrong; please verify your paths and data.")
 
 
 
