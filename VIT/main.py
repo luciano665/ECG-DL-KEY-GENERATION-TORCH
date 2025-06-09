@@ -5,9 +5,6 @@ import pickle
 
 import torch
 import torch.nn as nn
-from scipy.linalg import circulant
-from torch import dtype
-from torch.cuda import device
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import wandb
@@ -18,12 +15,12 @@ import wandb
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Log into wandb library
-wandb.login(relogin=True)
+#wandb.login(relogin=True)
 
 # Init wandb to record results
 wandb.init(
     entity="lumr0067-west-virginia-university",
-    project="ecg-key_generation",
+    project="ECG-VIT-KEY-GENERATION",
     config={
         "epochs": 100,
         "batch_size": 32,
@@ -35,7 +32,8 @@ wandb.init(
         "mlp_dim": 128,
         "num_transformer_blocks": 4,
         "key_bits": 256,
-        "dropout_rate": 0.1
+        "dropout_rate": 0.1,
+        "learning_rate": 1e-3
     }
 )
 config = wandb.config
@@ -97,7 +95,7 @@ class ECGKeyLoader:
 
         return persons   # list of dictionaries
 
-    def _validate_dataset(self):
+    def _validate_datasets(self):
         # At least one person must exist
         if not self.persons:
             raise  ValueError("No valid persons with both keys and ECG segments found")
@@ -377,8 +375,8 @@ class KeyGenerationSystem:
 # 4. Main Execution with Error Handling (mirrors TF script)
 # =====================================================================
 if __name__ == '__main__':
-    DATA_DIR = ""
-    KEY_FILE = ""
+    DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
+    KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
 
     try:
         print("Initializing system....")
