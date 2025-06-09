@@ -5,6 +5,8 @@ import pickle
 
 import torch
 import torch.nn as nn
+from scipy.linalg import circulant
+from torch import dtype
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import wandb
@@ -251,6 +253,7 @@ class TransformerKeyGenerator(nn.Module):
 # 3. Training and Key Generation System (mirrors TF logic) with WandB
 # =====================================================================
 class KeyGenerationSystem:
+    # Constructor
     def __init__(self, data_dir, key_path, device=None):
         # Init data loader
         self.loader = ECGKeyLoader(data_dir, key_path)
@@ -258,6 +261,117 @@ class KeyGenerationSystem:
         self.device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
         # Placeholder for model
         self.model = None
+
+    def train(self, epochs=config.epochs, batch_size=config.batch_size, lr=config.learning_rate, patience=config.patience):
+        # Get train/validation splits
+        X_train, X_val, Y_train, Y_val = self.loader.get_train_data()
+        print("X_train shape:", X_train.shape)
+        print("X_val shape:", X_val.shape)
+        print("Y_train shape:", Y_train.shape)
+        print("Y_val shape:", Y_val.shape)
+
+        # Instance model with correct key length
+        key_bits = Y_train.shape[1] if Y_train.ndim > 1 else config.key_bits
+        self.model = TransformerKeyGenerator(
+            seq_len=config.seq_len,
+            patch_size=config.patch_size,
+            embed_dim=config.embed_dim,
+            num_heads=config.num_heads,
+            mlp_dim=config.mlp_dim,
+            num_transformer_blocks=config.num_transformer_blocks,
+            key_bits=key_bits,
+            dropout_rate=config.dropout_rate
+        )
+
+        # Watch model with WandB to track gradients and parameters
+        wandb.watch(self.model, log="all", log_freq=50)
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        criterion = nn.BCELoss() # Binary cross-emtropy loss
+
+        # Track best validation loss
+        best_loss =  float('inf')
+        epochs_no_improve = 0 # early stopping counter
+        history = {'train_loss': [], 'val_loss': []} # record losses
+
+        # Creation of Datasets
+        train_ds = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(Y_train))
+        val_ds = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(Y_val))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size)
+
+        for ep in range(1, epochs + 1):
+            # training loop
+            self.model.train()
+            train_loss = 0.0
+            for xb, yb in train_loader:
+                xb, yb = xb.to(self.device), yb.to(self.device)
+                optimizer.zero_grad()
+                # Forward pass
+                predictions = self.model(xb)
+                # Compute loss
+                loss = criterion(predictions, yb)
+                # Backpropagation
+                loss.backward()
+                # Update of parameters
+                optimizer.step()
+                # Accumulate
+                train_loss += loss.item() * xb.size(0)
+            train_loss /= len(train_loader.dataset)
+
+            # Validation loop
+            self.model.eval() # set to eval mode
+            val_loss = 0.0
+            with torch.no_grad():
+                for xb, yb, in val_loader:
+                    xb, yb = xb.to(self.device), yb.to(self.device)
+                    val_loss += criterion(self.model(xb), yb).item() * xb.size(0)
+            val_loss /= len(val_loader.dataset)
+
+
+            # Log metrics to WandB
+            wandb.log({
+                'epoch': ep,
+                'train_loss': train_loss,
+                'val_loss': val_loss
+            })
+
+            # Record history
+            history['train_loss'].append(train_loss)
+            history['val_loss'].append(val_loss)
+            print(f"Epoch {ep}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
+
+            # Early stopping check
+            if val_loss < best_loss:
+                best_loss = val_loss # Update best
+                best_state = self.model.state_dict()  # save weights
+                epochs_no_improve = 0 # reset counter
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"Stopping early at epoch {ep}")
+                    break
+
+        # Restore best weights
+        self.model.load_state_dict(best_state)
+        return history
+
+    def generate_key(self, ecg_segments, threshold=0.5):
+        if ecg_segments is None or len(ecg_segments) == 0:
+            raise  ValueError("No ECG segment provided for key generation")
+        array = np.array(ecg_segments, dtype=np.float32)
+        if array.ndim == 2: # if missing channel dim
+            array = array.reshape(array.shape[0], array.shape[1], 1) # add channels
+        tensor = torch.from_numpy(array).to(self.device) # To tensor on device
+
+        # Eval mode
+        self.model.eval()
+        with torch.no_grad():
+            probs = self.model(tensor).cpu().numpy() # model output
+        avg = probs.mean(axis=0) # average probabilities across segments
+        # Threshold for final binary output
+        return (avg > threshold).astype(np.int32)
+
 
 
 
