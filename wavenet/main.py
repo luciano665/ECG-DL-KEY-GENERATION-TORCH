@@ -82,3 +82,48 @@ class ECGKeyLoader:
                 "key": self.key_map[pid]
             })
             print(f"Loaded {len(segments)} segments from {d}")
+
+        return persons
+
+    def _validate_dataset(self):
+        # Raise if no person of fewer than 10 segments total
+        if not self.persons:
+            raise ValueError("No valid persons with ECG data found")
+        total = sum(len(p["segments"]) for p in self.persons)
+        print(f"Dataset contains {len(self.persons)} persons with {total} total segments.")
+        if total < 10:
+            raise ValueError("Insufficient data available for training")
+
+    def _load_segments(self, person_path, seq_len=170):
+        segments = []
+        # Recursively scan CSV files under each recording folder
+        for root, _, files in os.walk(person_path):
+            for fn in files:
+                if not fn.endswith(".csv"):
+                    continue
+                file_path = os.path.join(root, fn)
+                try:
+                    # Skip header row, enforce exactly seq_len points
+                    ecg = np.loadtxt(file_path, delimiter=",", skiprows=1, ndmin=1)
+                    if ecg.ndim != 1 or len(ecg) != seq_len:
+                        continue
+                    segments.append(ecg.astype(np.float32))
+                except Exception as e:
+                    print(f"Error loading {file_path}: {e}")
+        return np.array(segments)
+
+    def get_train_data(self, test_size=0.2):
+        # Aggregate all segments & keys, stratify split by person ID
+        X, Y, ids = [], [], []
+        for p in self.persons:
+            X.extend(p["segments"])
+            Y.extend([p["key"]] * len(p["segments"]))
+            ids.extend([p["id"]] * len(p["segments"]))
+
+        X = np.array(X).reshape(-1, config.seq_len, 1)
+        Y = np.array(Y)
+        return train_test_split(X, Y, train_size=test_size, stratify=ids)
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 2. WaveNet Residual Block in PyTorch
+    # ─────────────────────────────────────────────────────────────────────────────
