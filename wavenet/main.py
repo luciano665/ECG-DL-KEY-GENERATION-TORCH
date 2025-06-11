@@ -124,6 +124,42 @@ class ECGKeyLoader:
         Y = np.array(Y)
         return train_test_split(X, Y, train_size=test_size, stratify=ids)
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    # 2. WaveNet Residual Block in PyTorch
-    # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. WaveNet Residual Block
+# ─────────────────────────────────────────────────────────────────────────────
+class WaveNetResidualBlock(nn.Module):
+    def __int__(self, channels, kernel_size, dilation, dropout):
+        super().__init__()
+        # Casual dilated convolution for filter & gate
+        pad = (kernel_size - 1) * dilation
+        self.conv_filter = nn.Conv1d(channels, channels, kernel_size, padding=pad, dilation=dilation)
+        self.conv_gate = nn.Conv1d(channels, channels, kernel_size, padding=pad, dilation=dilation)
+        self.dropout = nn.Dropout(dropout)
+        # 1x1 convolutions for residual & skip outputs
+        self.residual = nn.Conv1d(channels, channels, 1)
+        self.skip = nn.Conv1d(channels, channels, 1)
+
+    def forward(self, x):
+        # x shape: (batch, channels, time)
+        f = torch.tanh(self.conv_filter(x))
+        g = torch.sigmoid(self.conv_gate(x))
+        z = f * g
+        z = self.dropout(z)
+        residual = self.residual(z) + x
+        skip = self.skip(z)
+        return residual, skip
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Full WaveNet Key Generator Model
+# ─────────────────────────────────────────────────────────────────────────────
+class WaveNetKeyGeneration(nn.Module):
+    def __init__(self, seq_len, channels, n_blocks, kernel_size, key_bits, dropout):
+        super().__init__()
+        # Project input (1 channel) into high-dimensional feature space
+        self.initial = nn.Conv1d(1, channels, 1)
+        # Stack of dilated residual blocks
+        self.block = nn.ModuleList([
+            WaveNetResidualBlock(channels, kernel_size, 2**i, dropout)
+            for i in range(n_blocks)
+        ])
+
