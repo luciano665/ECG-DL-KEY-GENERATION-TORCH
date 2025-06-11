@@ -162,4 +162,47 @@ class WaveNetKeyGeneration(nn.Module):
             WaveNetResidualBlock(channels, kernel_size, 2**i, dropout)
             for i in range(n_blocks)
         ])
+        self.post_relu = nn.ReLU()
+        self.post_conv = nn.Conv1d(channels, channels, 1)
+        # Global average pool over time -> (batch, channels)
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        # Final dense projection to kye_bits and sigmoid for binary output
+        self.fc = nn.Linear(channels, key_bits)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # Input x shape: (batch, seq_len, 1) ->permute to (batch, 1, seq_len)
+        x = x.permute(0, 2, 1)
+        x = self.initial(x)
+        skip_sum = 0
+        # Accumulate all skip connections
+        for block in self.blocks:
+            x, skip = block(x)
+            skip_sum = skip_sum + skip
+        x = self.post_relu(skip_sum)
+        x = self.post_conv(x)
+        x = self.post_relu(x)
+        # Pool down to (batch, channels)
+        x = self.pool(x).squeeze(-1)
+        x = self.fc(x)
+        return self.sigmoid(x)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Training & Generation System: mirrors TF main exactly
+# ─────────────────────────────────────────────────────────────────────────────
+class KeyGenerationSystem:
+    def __init__(self, data_dir, key_path, device=None):
+        # 1) Initialize data loader
+        self.loader = ECGKeyLoader(data_dir, key_path)
+        # 2) Set compute device
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 3) Buidl the Pytorch WaveNet model and move to device
+        self.model = WaveNetKeyGeneration(
+            seq_len=config.seq_len,
+            channels=config.num_filters,
+            n_blocks=config.num_wavenet_blocks,
+            kernel_size=config.kernel_size,
+            key_bits=config.key_bits,
+            dropout=config.dropout_rate
+        ).to(self.device)
 
