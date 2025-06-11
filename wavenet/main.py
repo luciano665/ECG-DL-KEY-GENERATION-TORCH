@@ -206,3 +206,77 @@ class KeyGenerationSystem:
             dropout=config.dropout_rate
         ).to(self.device)
 
+    def train(self, epochs=config.epochs, batch_size=config.batch_size,
+              lr=config.learning_rate, patience=config.patience):
+        # 1) Get train/val splits
+        X_train, X_val, Y_train, Y_val = self.loader.get_train_data()
+        print("X_train shape:", X_train.shape)
+        print("X_val   shape:", X_val.shape)
+        print("Y_train shape:", Y_train.shape)
+        print("Y_val   shape:", Y_val.shape)
+
+        # 2) Wrap in DataLoader
+        train_ds = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(Y_train))
+        val_ds = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(Y_val))
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size)
+
+        # 3) Optimizer, loss, and WandB monitoring
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        criterion = nn.BCELoss()
+        wandb.watch(self.model, log="all", log_freq=50)
+
+        best_val = float("inf")
+        no_improve = 0
+
+        for ep in range(1, epochs + 1):
+            # Training phase
+            self.model.train()
+            train_loss = 0.0
+            for xb, yb in train_loader:
+                xb, yb = xb.to(self.device), yb.to(self.device)
+                optimizer.zero_grad()
+                output = self.model(xb)
+                loss = criterion(output, yb)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item() * xb.size(0)
+            train_loss /= len(train_loader.dataset)
+
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for xb, yb in val_loader:
+                    xb, yb = xb.to(self.device), yb.to(self.device)
+                    val_loss += criterion(self.model(xb), yb).item() * xb.size(0)
+            val_loss /= len(val_loader.dataset)
+
+            # Log & early stopping
+            wandb.log({"epoch": ep, "train_loss": train_loss, "val_loss": val_loss})
+            print(f"Epoch {ep}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
+
+            if val_loss < best_val:
+                best_val = val_loss
+                torch.save(self.model.state_dict(), "best_wavenet.pt")
+                no_improve = 0
+            else:
+                no_improve += 1
+                if no_improve >= patience:
+                    print(f"Stopping early at epoch {ep}")
+                    break
+
+        # Restore best weights
+        self.model.load_state_dict(torch.load("best_wavenet.pt"))
+
+    def generate_key(self, ecg_segments, threshold=0.5):
+        # Identical logic: average per-segment predictions, threshold
+        array = np.array(ecg_segments, dtype=np.float32)
+        if array.ndim == 2:
+            array = array.reshape(-1, config.seq_len, 1)
+        tensor = torch.from_numpy(array).to(self.device)
+        self.model.eval()
+        with torch.no_grad():
+            probs = self.model(tensor).cpu().numpy()
+        avg = probs.mean(axis=0)
+        return (avg > threshold).astype(np.int32)
