@@ -8,9 +8,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import wandb
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 0. Initialize Weights & Biases for experiment tracking
-# ─────────────────────────────────────────────────────────────────────────────
+
 wandb.init(
     entity="lumr0067-west-virginia-university",
     project="ECG-WAVENET-KEY-GENERATION",
@@ -34,9 +34,9 @@ wandb.init(
 )
 config = wandb.config
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 1. Data loading
-# ─────────────────────────────────────────────────────────────────────────────
+
 class ECGKeyLoader:
     def __init__(self, data_dir, key_path):
         # Store data directory and load JSON file of ground-truth keys
@@ -124,9 +124,8 @@ class ECGKeyLoader:
         Y = np.array(Y)
         return train_test_split(X, Y, train_size=test_size, stratify=ids)
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 2. WaveNet Residual Block
-# ─────────────────────────────────────────────────────────────────────────────
 class WaveNetResidualBlock(nn.Module):
     def __int__(self, channels, kernel_size, dilation, dropout):
         super().__init__()
@@ -149,9 +148,8 @@ class WaveNetResidualBlock(nn.Module):
         skip = self.skip(z)
         return residual, skip
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 3. Full WaveNet Key Generator Model
-# ─────────────────────────────────────────────────────────────────────────────
 class WaveNetKeyGeneration(nn.Module):
     def __init__(self, seq_len, channels, n_blocks, kernel_size, key_bits, dropout):
         super().__init__()
@@ -187,9 +185,8 @@ class WaveNetKeyGeneration(nn.Module):
         x = self.fc(x)
         return self.sigmoid(x)
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 4. Training & Generation System: mirrors TF main exactly
-# ─────────────────────────────────────────────────────────────────────────────
 class KeyGenerationSystem:
     def __init__(self, data_dir, key_path, device=None):
         # 1) Initialize data loader
@@ -281,9 +278,8 @@ class KeyGenerationSystem:
         avg = probs.mean(axis=0)
         return (avg > threshold).astype(np.int32)
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 5. Main
-# ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     DATA_DIR = ""
     KEY_FILE = ""

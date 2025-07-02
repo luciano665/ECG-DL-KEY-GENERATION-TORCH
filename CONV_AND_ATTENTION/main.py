@@ -10,10 +10,9 @@ from torch.utils.data import DataLoader, TensorDataset
 import wandb
 import os
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 0. Initialize wandb client
 #   - A training monitoring tool, visualization of loss
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Get wandb API_key
 # Login into wandb library
@@ -34,13 +33,11 @@ wandb.init(
 )
 config = wandb.config # access config values throughout
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 1. Data Loader: ECGKeyLoader
 #    - Reads ECG segments and associated ground-truth keys
 #    - Filters directories and files, validates segment length
 #    - Splits data into training and validation sets
-# ─────────────────────────────────────────────────────────────────────────────
+
 class ECGKeyLoader:
     """
         Handles loading ECG signal segments and their corresponding ground truth Key (256-bits)
@@ -173,13 +170,12 @@ class ECGKeyLoader:
         return train_test_split(X, y, test_size=test_size, stratify=ids)
 
 
-# -----------------------------------------------------------------------------
+
 # 2. Model Definition: BioKeyTransformer
 #    - 1D CNN encoder to extract features from ECG
 #    - Multi-head self-attention to learn temporal dependencies
 #    - LayerNorm + residual for stability
 #    - Global average pooling → binary key projection
-# -----------------------------------------------------------------------------
 class BioKeyTransformer(nn.Module):
     """
     Hybrid CNN-Transformer for ECG-based binary key generation
@@ -219,12 +215,11 @@ class BioKeyTransformer(nn.Module):
         # Map the key bits and apply sigmoid
         return  self.sigmoid(self.key_proj(x))
 
-# -----------------------------------------------------------------------------
+
 # 3. Training System: KeyGenerationSystem
 #    - Integrates data loading, model instantiation, training loop
 #    - Implements early stopping based on validation loss
 #    - Provides key generation (inference) method
-# -----------------------------------------------------------------------------
 class KeyGenerationSystem:
     """
     Orchestrates data loading, model training, and key generation
@@ -341,13 +336,12 @@ class KeyGenerationSystem:
         return  (avg > threshold).astype(np.int32)
 
 
-# -----------------------------------------------------------------------------
 # 4. Main Execution: script entrypoint
 #    - Configurable data paths
 #    - Error handling and reporting
 #    - Computes intra- and inter-person Hamming distances
 #    - Saves raw distance data for subsequent analysis
-# -----------------------------------------------------------------------------
+
 if __name__ == "__main__":
     DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
     KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
