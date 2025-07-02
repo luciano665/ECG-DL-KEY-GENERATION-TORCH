@@ -9,10 +9,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 import wandb
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 0. Initialize wandb client
 #   - A training monitoring tool, visualization of loss
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Log into wandb library
 #wandb.login(relogin=True)
@@ -39,9 +38,7 @@ wandb.init(
 config = wandb.config
 
 
-# =====================================================================
-# 1. Data Loader with rec_2_filtered Handling (mirrors TF version logic)
-# =====================================================================
+# 1. Data Loader with rec_2_filtered Handling
 class ECGKeyLoader:
     # Constructor
     def __init__(self, data_dir, key_path):
@@ -248,9 +245,7 @@ class TransformerKeyGenerator(nn.Module):
         x = self.key_proj(x) # (batch, key_bits)
         return self.sigmoid(x)
 
-# =====================================================================
-# 3. Training and Key Generation System (mirrors TF logic) with WandB
-# =====================================================================
+# 3. Training and Key Generation System  with WandB
 class KeyGenerationSystem:
     # Constructor
     def __init__(self, data_dir, key_path, device=None):
@@ -371,9 +366,8 @@ class KeyGenerationSystem:
         # Threshold for final binary output
         return (avg > threshold).astype(np.int32)
 
-# =====================================================================
-# 4. Main Execution with Error Handling (mirrors TF script)
-# =====================================================================
+
+# 4. Main Execution with Error Handling
 if __name__ == '__main__':
     DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
     KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
