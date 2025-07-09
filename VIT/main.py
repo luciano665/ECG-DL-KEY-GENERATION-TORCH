@@ -165,7 +165,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x): # x shape: (batch, seq_len, embed_dim)
         # Sell-attention mechanism
-        attn_output = self.attn(x, x, x)
+        attn_output, _ = self.attn(x, x, x)
         # Apply dropout
         attn_output = self.dropout1(attn_output)
         # Residual + layer-norm
@@ -241,7 +241,7 @@ class TransformerKeyGenerator(nn.Module):
         for block in self.transformer_blocks:
             x = block(x) # -> to each block
         x = x.permute(0, 2, 1) # -> (batch, embed_dim, num_patches) for pooling
-        x = self.gap(x).squezee(-1) # -> (batch, embed_dim)
+        x = self.gap(x).squeeze(-1) # -> (batch, embed_dim)
         x = self.key_proj(x) # (batch, key_bits)
         return self.sigmoid(x)
 
@@ -398,7 +398,7 @@ if __name__ == '__main__':
             ground_keys = person['key'].astype(np.int32)
             acc = np.mean(agg_key == ground_keys) # accuracy
             print(f"\nPerson {person['id']}: Aggregated Key Accuracy: {acc:.2%}")
-            aggregated_keys[person['id']] == agg_key
+            aggregated_keys[person['id']] = agg_key
 
             # compute intra-person Hamming distances
             with torch.no_grad():
