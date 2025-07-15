@@ -13,7 +13,7 @@ import wandb
 
 wandb.init(
     entity="lumr0067-west-virginia-university",
-    project="ECG-WAVENET-KEY-GENERATION",
+    project="ECG-WN-KEY-GENERATION",
     config={
         # Training Parameters
         "epochs": 100,
