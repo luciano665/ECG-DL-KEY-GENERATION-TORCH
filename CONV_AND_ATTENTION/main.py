@@ -343,8 +343,8 @@ class KeyGenerationSystem:
 #    - Saves raw distance data for subsequent analysis
 
 if __name__ == "__main__":
-    DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
-    KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
+    DATA_DIR = ""
+    KEY_FILE = ""
 
     try:
         print("Initializing system...")
