@@ -281,8 +281,8 @@ class KeyGenerationSystem:
 
 # 5. Main
 if __name__ == "__main__":
-    DATA_DIR = ""
-    KEY_FILE = ""
+    DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
+    KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
 
     try:
         print("Initializing system....")
