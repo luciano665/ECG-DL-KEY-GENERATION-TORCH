@@ -68,7 +68,7 @@ class ECGKeyLoader:
                 pid = int(d.split("_")[-1].lstrip("0")) or int(d.split("_")[-1])
             except ValueError:
                 continue
-            if pid in valid_ids:
+            if pid not in valid_ids:
                 continue
 
             # Gather that person's valid 170-sample ECG segments
