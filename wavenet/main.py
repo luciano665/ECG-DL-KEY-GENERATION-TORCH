@@ -127,7 +127,7 @@ class ECGKeyLoader:
 
 # 2. WaveNet Residual Block
 class WaveNetResidualBlock(nn.Module):
-    def __int__(self, channels, kernel_size, dilation, dropout):
+    def __init__(self, channels, kernel_size, dilation, dropout):
         super().__init__()
         # Casual dilated convolution for filter & gate
         pad = (kernel_size - 1) * dilation
