@@ -130,9 +130,9 @@ class WaveNetResidualBlock(nn.Module):
     def __init__(self, channels, kernel_size, dilation, dropout):
         super().__init__()
         # Casual dilated convolution for filter & gate
-        pad = (kernel_size - 1) * dilation
-        self.conv_filter = nn.Conv1d(channels, channels, kernel_size, padding=pad, dilation=dilation)
-        self.conv_gate = nn.Conv1d(channels, channels, kernel_size, padding=pad, dilation=dilation)
+        #pad = (kernel_size - 1) * dilation
+        self.conv_filter = nn.Conv1d(channels, channels, kernel_size, padding="same", dilation=dilation)
+        self.conv_gate = nn.Conv1d(channels, channels, kernel_size, padding="same", dilation=dilation)
         self.dropout = nn.Dropout(dropout)
         # 1x1 convolutions for residual & skip outputs
         self.residual = nn.Conv1d(channels, channels, 1)
@@ -156,12 +156,12 @@ class WaveNetKeyGeneration(nn.Module):
         # Project input (1 channel) into high-dimensional feature space
         self.initial = nn.Conv1d(1, channels, 1)
         # Stack of dilated residual blocks
-        self.block = nn.ModuleList([
+        self.blocks = nn.ModuleList([
             WaveNetResidualBlock(channels, kernel_size, 2**i, dropout)
             for i in range(n_blocks)
         ])
         self.post_relu = nn.ReLU()
-        self.post_conv = nn.Conv1d(channels, channels, 1)
+        self.post_conv = nn.Conv1d(channels, channels, 1, padding='same')
         # Global average pool over time -> (batch, channels)
         self.pool = nn.AdaptiveAvgPool1d(1)
         # Final dense projection to kye_bits and sigmoid for binary output
@@ -281,8 +281,8 @@ class KeyGenerationSystem:
 
 # 5. Main
 if __name__ == "__main__":
-    DATA_DIR = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/segmented_ecg_data_torch_use"
-    KEY_FILE = "/Users/lucianomaldonado/ECG_KEY-PYTORCH/GROUND_TRUTH_KEYS/secrets_random_keys_torch.json"
+    DATA_DIR = ""
+    KEY_FILE = ""
 
     try:
         print("Initializing system....")

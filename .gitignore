@@ -5,6 +5,7 @@
 *.txt
 *.xml
 *.pkl
+*.pt
 
 # JetBrains IDE
 *.iml
