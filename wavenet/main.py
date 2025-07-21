@@ -298,58 +298,102 @@ if __name__ == "__main__":
         # Test key generation for all persons
         # ----------------------------
         print("\nTesting key generation for all persons:")
-        aggregated_keys = {}
-        all_intra = []
+
+        aggregated_keys = {}     # person_id -> aggregated (final) key
+        all_intra_distances = [] # flat list of ALL intra-person pair distances
 
         for person in kgs.loader.persons:
             segments = person["segments"]
-            if segments.ndim == 2:
+            if segments.ndim == 2:  # ensure (N_segments, seq_len, 1)
                 segments = segments.reshape(segments.shape[0], segments.shape[1], 1)
 
-            agg_key = kgs.generate_key(segments)
-            ground = person["key"].astype(np.int32)
-            acc = np.mean(agg_key == ground)
-            print(f"\nPerson {person['id']}: Aggregated Key Accuracy: {acc:.2%}")
-            aggregated_keys[person["id"]] = agg_key
+            # Aggregated key (average over segments then threshold)
+            aggregated_key = kgs.generate_key(segments)
+            ground_truth   = person["key"].astype(np.int32)
+            acc = np.mean(aggregated_key == ground_truth)
 
-            # Intra-person Hamming distances
+            print(f"\nPerson {person['id']}:")
+            print(f"  Aggregated Key Accuracy: {acc:.2%}")
+            print(f"  Aggregated Key (first 24 bits): {aggregated_key[:24]}...")
+            print(f"  Ground Truth   (first 24 bits): {ground_truth[:24]}...")
+
+            aggregated_keys[person["id"]] = aggregated_key
+
+            # ---- Intra-person pairwise Hamming distances (segment-level) ----
             with torch.no_grad():
-                preds = (kgs.model(torch.from_numpy(segments).to(kgs.device)).cpu().numpy() > 0.5).astype(int)
-            dists = []
-            for i in range(len(preds)):
-                for j in range(i + 1, len(preds)):
-                    dists.append(np.sum(preds[i] != preds[j]))
-            if dists:
-                m, s = np.mean(dists), np.std(dists)
-                print(f"  Intra-person avg Hamming distance: {m:.2f} ± {s:.2f} bits")
-                all_intra += dists
+                seg_tensor = torch.from_numpy(segments).to(kgs.device)
+                probs = kgs.model(seg_tensor).cpu().numpy()
+            segment_keys = (probs > 0.5).astype(np.int32)  # shape: (num_segments, key_bits)
+
+            n_seg = segment_keys.shape[0]
+            if n_seg > 1:
+                # Pairwise comparisons
+                for i in range(n_seg):
+                    ki = segment_keys[i]
+                    for j in range(i + 1, n_seg):
+                        d = int(np.sum(ki != segment_keys[j]))
+                        all_intra_distances.append(d)
+                per_person_mean = float(np.mean([
+                    int(np.sum(segment_keys[i] != segment_keys[j]))
+                    for i in range(n_seg) for j in range(i + 1, n_seg)
+                ]))
+                print(f"  Intra-person average Hamming distance: {per_person_mean:.2f} bits")
             else:
-                print("  Not enough segments for intra-person HD")
+                print("  Not enough segments for intra-person Hamming distance.")
 
-        if all_intra:
-            print(f"\nOverall Intra-person HD: mean={np.mean(all_intra):.2f}, std={np.std(all_intra):.2f}")
+        # ---- Overall intra statistics (flat list) ----
+        if all_intra_distances:
+            overall_intra_mean = np.mean(all_intra_distances)
+            overall_intra_std  = np.std(all_intra_distances)
+            print("\nOverall Intra-person Hamming Distance (pooled pairs): "
+                  f"mean= {overall_intra_mean:.2f} bits, std= {overall_intra_std:.2f} bits, "
+                  f"n_pairs={len(all_intra_distances)}")
         else:
-            print("\nNo intra-person data.")
+            print("\nNo intra-person distances collected.")
 
-        # Inter-person Hamming distances
-        print("\nInter-person Hamming distances:")
-        ids = sorted(aggregated_keys)
-        inter = []
-        for i in range(len(ids)):
-            for j in range(i + 1, len(ids)):
-                d = int(np.sum(aggregated_keys[ids[i]] != aggregated_keys[ids[j]]))
-                inter.append(d)
-                print(f"  {ids[i]} vs {ids[j]}: {d} bits")
-        if inter:
-            print(f"\nOverall Inter-person HD: mean={np.mean(inter):.2f}, std={np.std(inter):.2f}")
+        # ----------------------------
+        # Inter-person Hamming distances (aggregated keys)
+        # ----------------------------
+        print("\nInter-person Hamming distances (aggregated keys):")
+        person_ids = sorted(aggregated_keys.keys())
+
+        # dict person_id -> list of distances to *each other* person
+        person_inter_dists = {pid: [] for pid in person_ids}
+
+        for i in range(len(person_ids)):
+            pid_i = person_ids[i]
+            key_i = aggregated_keys[pid_i]
+            for j in range(i + 1, len(person_ids)):
+                pid_j = person_ids[j]
+                key_j = aggregated_keys[pid_j]
+                d = int(np.sum(key_i != key_j))
+                # store distance for both persons (duplicated style you already use)
+                person_inter_dists[pid_i].append(d)
+                person_inter_dists[pid_j].append(d)
+                print(f"  {pid_i} vs {pid_j}: {d} bits")
+
+        # Overall inter (flatten duplicated lists)
+        all_inter_dup = [d for lst in person_inter_dists.values() for d in lst]
+        if all_inter_dup:
+            inter_mean = np.mean(all_inter_dup)
+            inter_std  = np.std(all_inter_dup)
+            print(f"\nOverall Inter-person Hamming Distance (duplicated entries): "
+                  f"mean= {inter_mean:.2f} bits, std= {inter_std:.2f} bits, n_entries={len(all_inter_dup)}")
         else:
-            print("\nNo inter-person data.")
+            print("\nNo inter-person distances computed.")
 
-        # Save raw distances
-        with open("all_intra_distances_wavenet.pkl", "wb") as f:
-            pickle.dump(all_intra, f)
-        with open("all_inter_distances_wavenet.pkl", "wb") as f:
-            pickle.dump(inter, f)
+        # ----------------------------
+        # Save PKL files (formats compatible with your plotting script)
+        # ----------------------------
+        with open("all_intra_distances.pkl", "wb") as f:
+            pickle.dump(all_intra_distances, f)
+
+        with open("person_inter_dists.pkl", "wb") as f:
+            pickle.dump(person_inter_dists, f)
+
+        print("\nSaved PKL files:")
+        print("  all_intra_distances.pkl  (flat list of intra pair distances)")
+        print("  person_inter_dists.pkl   (dict person_id -> list of inter distances)")
 
     except Exception as e:
         print(f"\nError: {e}")

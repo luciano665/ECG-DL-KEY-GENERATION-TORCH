@@ -355,59 +355,111 @@ if __name__ == "__main__":
         # ---------------------------------------------------------------------
         # Testing and evaluation: compute Hamming distances
         # ---------------------------------------------------------------------
+
         print("\nTesting key generation for all persons:")
+
+        # Dictionary to hold aggregated keys for inter-person comparisons
         aggregated_keys = {}
-        all_intra = []
+        all_intra_keys = []
 
         for person in kgs.loader.persons:
-            segs = person['segments']
-            agg  = kgs.generate_key(segs)
-            gt   = person['key'].astype(np.int32)
-            acc  = np.mean(agg == gt)
-            print(f"\nPerson {person['id']}: Aggregated Key Accuracy: {acc:.2%}")
-            aggregated_keys[person['id']] = agg
+            segments = person['segments']
+            # Ensure 3D tensor shape (N_segments, seq_len, 1)
+            if segments.ndim == 2:
+                segments = segments.reshape(segments.shape[0], segments.shape[1], 1)
 
-            # Compute intra-person Hamming distances
-            preds = (kgs.model(torch.from_numpy(segs).float().to(kgs.device).unsqueeze(-1))
-                     .cpu().numpy() > 0.5).astype(int)
-            dists = []
-            for i in range(len(preds)):
-                for j in range(i+1, len(preds)):
-                    dists.append(np.sum(preds[i] != preds[j]))
-            if dists:
-                m, s = np.mean(dists), np.std(dists)
-                print(f"  Intra-person avg Hamming distance: {m:.2f} ± {s:.2f} bits")
-                all_intra += dists
+            # Generate aggregated key from all segments for this person
+            aggregated_key = kgs.generate_key(segments)
+            ground_truth = person['key'].astype(np.int32)
+            accuracy = np.mean(aggregated_key == ground_truth)
+
+            print(f"\nPerson {person['id']}:")
+            print(f"  Aggregated Key Accuracy: {accuracy:.2%}")
+            print(f"  Aggregated Key: {aggregated_key[:24]}...")
+            print(f"  Ground Truth:   {ground_truth[:24]}...")
+
+            aggregated_keys[person['id']] = aggregated_key
+
+            # ----------------------------
+            # Compute Intra-Person Hamming Distance
+            # ----------------------------
+            # Segment-level forward pass (PyTorch)
+            with torch.no_grad():
+                seg_tensor = torch.from_numpy(segments).to(kgs.device)
+                probs = kgs.model(seg_tensor).cpu().numpy()
+            individual_keys = (probs > 0.5).astype(np.int32)  # shape: (num_segments, key_bits)
+            num_keys = individual_keys.shape[0]
+
+            if num_keys > 1:
+                distances = []
+                for i in range(num_keys):
+                    for j in range(i + 1, num_keys):
+                        d = int(np.sum(individual_keys[i] != individual_keys[j]))
+                        distances.append(d)
+                avg_distance = np.mean(distances)
+                print(f"  Intra-person average Hamming distance: {avg_distance:.2f} bits")
+                all_intra_keys.extend(distances)
             else:
-                print("  Not enough segments to compute intra-person HD.")
+                print("  Not enough segments to compute intra-person Hamming distance.")
 
-        # Overall intra-person statistics
-        if all_intra:
-            print(f"\nOverall Intra-person HD: mean={np.mean(all_intra):.2f}, std={np.std(all_intra):.2f}")
+        # Overall intra HD statistics
+        if all_intra_keys:
+            overall_intra_mean = np.mean(all_intra_keys)
+            overall_intra_std = np.std(all_intra_keys)
+            print("\nOverall Intra-person Hamming Distance: "
+                  f"mean= {overall_intra_mean:.2f} bits, std= {overall_intra_std:.2f} bits")
         else:
-            print("\nNo intra-person HD data.")
+            print("\nNo data available to compute mean and std for Intra-person Hamming Distance.")
 
-        # ---------------------------------------------------------------------
-        # Inter-person Hamming distances
-        # ---------------------------------------------------------------------
-        print("\nInter-person Hamming distances:")
-        ids = sorted(aggregated_keys)
-        inter = []
-        for i in range(len(ids)):
-            for j in range(i+1, len(ids)):
-                d = int(np.sum(aggregated_keys[ids[i]] != aggregated_keys[ids[j]]))
-                inter.append(d)
-                print(f"  {ids[i]} vs {ids[j]}: {d} bits")
-        if inter:
-            print(f"\nOverall Inter-person HD: mean={np.mean(inter):.2f}, std={np.std(inter):.2f}")
+        # ----------------------------
+        # Compute Inter-Person Hamming Distances (aggregated keys)
+        # ----------------------------
+        person_ids = sorted(aggregated_keys.keys())
+        person_inter_dists = {p: [] for p in person_ids}
+        print("\nInter-person Hamming distances (aggregated keys):")
+
+        for i in range(len(person_ids)):
+            for j in range(i + 1, len(person_ids)):
+                key1 = aggregated_keys[person_ids[i]]
+                key2 = aggregated_keys[person_ids[j]]
+                d = int(np.sum(key1 != key2))
+                # Save the distance for both persons
+                person_inter_dists[person_ids[i]].append(d)
+                person_inter_dists[person_ids[j]].append(d)
+                print(f"  Distance between Person {person_ids[i]} and Person {person_ids[j]}: {d} bits")
+
+        # Compute overall inter-person statistics (double-counted pairs in dict)
+        all_inter_distances = []
+        for dist_list in person_inter_dists.values():
+            all_inter_distances.extend(dist_list)
+
+        if all_inter_distances:
+            overall_inter_mean = np.mean(all_inter_distances)
+            overall_inter_std = np.std(all_inter_distances)
+            print("\nOverall Inter-person Hamming Distance (double-counted lists): "
+                  f"mean = {overall_inter_mean:.2f} bits, std = {overall_inter_std:.2f} bits")
+            # If you want true unordered pair stats, compute once-through:
+            unordered = []
+            for i in range(len(person_ids)):
+                for j in range(i + 1, len(person_ids)):
+                    unordered.append(int(np.sum(aggregated_keys[person_ids[i]] != aggregated_keys[person_ids[j]])))
+            print(
+                f"  (Unique pairs) mean = {np.mean(unordered):.2f} bits, std = {np.std(unordered):.2f} bits, n_pairs={len(unordered)}")
         else:
-            print("\nNo inter-person HD data.")
+            print("\nNo data available to compute inter-person Hamming Distance statistics.")
 
-        # Save raw distance arrays for plotting or further analysis
+        # ----------------------------
+        # Save the raw distance data for later plotting:
+        # ----------------------------
         with open("all_intra_distances.pkl", "wb") as f:
-            pickle.dump(all_intra, f)
+            pickle.dump(all_intra_keys, f)
+
         with open("person_inter_dists.pkl", "wb") as f:
-            pickle.dump(inter, f)
+            pickle.dump(person_inter_dists, f)
+
+        print("\nSaved PKL files:")
+        print("  all_intra_distances.pkl  (flat list of intra pair distances)")
+        print("  person_inter_dists.pkl   (dict person_id -> list of inter distances)")
 
     except Exception as e:
         print(f"\nError: {e}")
