@@ -15,7 +15,7 @@ import os
 
 # Get wandb API_key
 # Login into wandb library
-wandb.login(relogin=True)
+#wandb.login(relogin=True)
 
 # Init wandDB to record results
 wandb.init(

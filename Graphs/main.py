@@ -9,7 +9,7 @@ from pathlib import Path
 # -----------------------------
 INTRA_PKL = ""
 INTER_PKL = ""
-ARCH_NAME = "" # Label for titles
+ARCH_NAME = "C" # Label for titles
 SAVE_DIR = Path("figures_combined")
 SAVE_DIR.mkdir(exist_ok=True)
 
